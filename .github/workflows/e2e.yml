@@ -1,0 +1,49 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "pravaha/**"
+      - "docker-compose.yml"
+      - "infrastructure/**"
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bring up the stack
+        run: |
+          cp .env.example .env
+          docker compose up -d --build
+          docker compose run --rm migrate
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8000/api/v1/ready && break || sleep 5
+          done
+      - name: Seed a short burst of demo traffic
+        run: |
+          docker compose run --rm --no-deps \
+            -e NEXT_PUBLIC_API_BASE_URL=http://api:8000 seed \
+            python -m pravaha.scripts.generate_events --bootstrap --rate 40 --duration 60 || true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Playwright
+        working-directory: apps/web
+        run: |
+          npm ci || npm install
+          npx playwright install --with-deps chromium
+          npx playwright test
+        env:
+          PRAVAHA_E2E_BASE_URL: http://localhost:3000
+          PRAVAHA_API_BASE_URL: http://localhost:8000
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color | tail -400

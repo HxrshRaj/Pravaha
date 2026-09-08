@@ -1,0 +1,36 @@
+# Single Python image for the API and every worker (different `command:`).
+FROM python:3.11-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Dependency layer (cached unless pyproject changes)
+COPY pyproject.toml README.md ./
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir "." \
+    && pip uninstall -y pravaha
+
+# App source
+COPY pravaha ./pravaha
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+RUN pip install --no-cache-dir --no-deps -e .
+
+# non-root
+RUN useradd -m -u 10001 pravaha && chown -R pravaha:pravaha /app
+USER pravaha
+
+EXPOSE 8000 9100
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=25s --retries=5 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "pravaha.api:app", "--host", "0.0.0.0", "--port", "8000"]

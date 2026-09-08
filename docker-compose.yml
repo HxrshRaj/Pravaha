@@ -1,0 +1,266 @@
+# Pravaha - full local stack.
+#
+#   docker compose up -d --build
+#   docker compose run --rm migrate            # applies alembic migrations
+#   docker compose logs -f api analytics
+#
+# Bring-up order is handled by healthchecks + depends_on. The `migrate` service
+# is one-shot; `seed` is optional demo data.
+
+x-python-env: &python-env
+  PRAVAHA_ENV: local
+  PRAVAHA_LOG_JSON: "true"
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: pravaha
+  POSTGRES_USER: pravaha
+  POSTGRES_PASSWORD: pravaha
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  API_JWT_SECRET: ${API_JWT_SECRET:-dev-only-insecure-secret-change-me}
+  AI_PROVIDER_ORDER: ${AI_PROVIDER_ORDER:-mock}
+  AI_OPENAI_API_KEY: ${AI_OPENAI_API_KEY:-}
+  AI_GROQ_API_KEY: ${AI_GROQ_API_KEY:-}
+
+x-python-build: &python-build
+  image: pravaha-app:local        # ONE shared image for the API and every worker
+  build:
+    context: .
+    dockerfile: infrastructure/docker/Dockerfile.api
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pravaha
+      POSTGRES_USER: pravaha
+      POSTGRES_PASSWORD: pravaha
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pravaha -d pravaha"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.9.0
+    ports: ["29092:29092"]        # host access via localhost:29092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: pravaha-local-cluster-0001
+    volumes: ["kafkadata:/var/lib/kafka/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+
+  kafka-init:
+    <<: *python-build
+    depends_on:
+      kafka: {condition: service_healthy}
+    environment: *python-env
+    command: ["python", "-m", "pravaha.scripts.ensure_topics"]
+    restart: "no"
+
+  migrate:
+    <<: *python-build
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: *python-env
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    <<: *python-build
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    environment:
+      <<: *python-env
+      API_CORS_ORIGINS: ${WEB_ORIGIN:-http://localhost:3000}
+    ports: ["${API_HOST_PORT:-8000}:8000"]
+    restart: unless-stopped
+
+  analytics:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "analytics", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  persistence:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "persistence", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  dataquality:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "dataquality", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  anomaly:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "anomaly", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  ai-worker:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "ai", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  audit:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "audit", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  lag-monitor:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "lag-monitor", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  replay-runner:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "replay-runner", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  retention:
+    <<: *python-build
+    depends_on:
+      api: {condition: service_healthy}
+    environment: {<<: *python-env, WORKER_HEALTH_PORT: "9100"}
+    command: ["python", "-m", "pravaha.workers", "retention", "--health-port", "9100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9100/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    image: pravaha-web:local
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    depends_on:
+      api: {condition: service_healthy}
+    environment:
+      PRAVAHA_API_INTERNAL_URL: http://api:8000
+    ports: ["${WEB_HOST_PORT:-3000}:3000"]
+    restart: unless-stopped
+
+  # Optional: demo traffic generator. `docker compose --profile demo up seed`
+  seed:
+    <<: *python-build
+    profiles: ["demo"]
+    depends_on:
+      api: {condition: service_healthy}
+    environment: *python-env
+    command: ["python", "-m", "pravaha.scripts.generate_events", "--rate", "40", "--duration", "600", "--bootstrap"]
+    restart: "no"
+
+volumes:
+  pgdata:
+  kafkadata:
