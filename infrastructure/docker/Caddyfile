@@ -1,0 +1,31 @@
+# Pravaha edge proxy. One public hostname; /api and /metrics -> API, everything
+# else -> the Next.js dashboard. Caddy fetches + renews a Let's Encrypt cert
+# automatically for $PRAVAHA_DOMAIN (use an *.nip.io / *.duckdns.org name if you
+# have no domain). Set PRAVAHA_ACME_EMAIL for expiry notices.
+
+{
+	email {$PRAVAHA_ACME_EMAIL:admin@example.com}
+	# For a name that can't get a real cert (bare IP, some nip.io setups),
+	# uncomment the next line to use Caddy's internal CA instead:
+	# local_certs
+}
+
+{$PRAVAHA_DOMAIN:localhost} {
+	encode gzip zstd
+
+	@api path /api/* /metrics /openapi.json /docs /docs/* /redoc /health /ready
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+	}
+}

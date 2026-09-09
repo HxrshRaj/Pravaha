@@ -1,0 +1,19 @@
+# Keep LF in the repo for everything text; normalize on commit.
+* text=auto eol=lf
+
+# Scripts and configs that MUST stay LF even when checked out on Windows
+# (a CRLF in a shebang breaks the script on Linux).
+*.sh            text eol=lf
+*.bash          text eol=lf
+Dockerfile*     text eol=lf
+Caddyfile       text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+Makefile        text eol=lf
+
+# Binaries
+*.png binary
+*.jpg binary
+*.ico binary
+*.gif binary
+*.pdf binary

@@ -1,7 +1,13 @@
 "use client";
 
+// NEXT_PUBLIC_API_BASE_URL is inlined at build time:
+//   - unset      -> "http://localhost:8000"  (plain `npm run dev`)
+//   - a URL      -> use it                    (docker compose passes this)
+//   - "" (empty) -> same-origin relative base (prod image behind a proxy that
+//                   routes /api + /health to the API; see Caddyfile)
+const _env = process.env.NEXT_PUBLIC_API_BASE_URL;
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  _env === undefined ? "http://localhost:8000" : _env.replace(/\/$/, "");
 
 const TOKEN_KEY = "pravaha.token";
 const ROLE_KEY = "pravaha.role";
@@ -98,8 +104,10 @@ export async function api<T = unknown>(
 
 export function sseUrl(path: string): string {
   const tok = getToken();
-  const u = new URL(`${API_BASE}${path}`);
-  // EventSource cannot set headers; pass token as query param (dev convenience).
+  const origin =
+    API_BASE || (typeof window !== "undefined" ? window.location.origin : "");
+  const u = new URL(`${origin}${path}`);
+  // EventSource cannot set headers; the API also accepts ?access_token=.
   if (tok) u.searchParams.set("access_token", tok);
   return u.toString();
 }

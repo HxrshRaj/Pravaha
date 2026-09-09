@@ -121,6 +121,25 @@ python -m pravaha.workers persistence --health-port 9102
 cd apps/web && npm install && npm run dev
 ```
 
+### Run it in the cloud (free)
+
+The whole stack (~4 GB RAM, real Kafka) doesn't fit "free web service" tiers, but
+there are three free ways to run it — full walkthrough in
+[`docs/operations/deploy-free.md`](docs/operations/deploy-free.md):
+
+- **GitHub Codespaces** — no card, the whole platform in ~5 min. Open
+  **Code ▸ Codespaces ▸ Create**, then `docker compose up -d --build && docker compose run --rm migrate`.
+  The repo ships a `.devcontainer/`. Stops when idle; 60 free core‑hours/month.
+- **Oracle Cloud Always Free (Ampere A1, 24 GB RAM, forever)** — a public 24/7 URL.
+  `cp deploy/.env.prod.example .env`, edit, `sudo bash deploy/deploy.sh`. Uses the
+  prebuilt GHCR images + Caddy auto‑HTTPS (`docker-compose.prod.yml`). Card is used
+  for identity verification only.
+- **Vercel** — the Next.js dashboard only (free); pair it with a backend from one of
+  the above.
+
+`.github/workflows/images.yml` publishes `ghcr.io/<owner>/pravaha-{app,web}` on every
+push to `main`.
+
 ## 6. Environment variables
 
 All configuration is environment-driven; see [`.env.example`](.env.example) for the full

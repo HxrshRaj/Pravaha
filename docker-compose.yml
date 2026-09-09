@@ -8,17 +8,19 @@
 # is one-shot; `seed` is optional demo data.
 
 x-python-env: &python-env
-  PRAVAHA_ENV: local
+  PRAVAHA_ENV: ${PRAVAHA_ENV:-local}
   PRAVAHA_LOG_JSON: "true"
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
   POSTGRES_DB: pravaha
   POSTGRES_USER: pravaha
-  POSTGRES_PASSWORD: pravaha
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pravaha}
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   API_JWT_SECRET: ${API_JWT_SECRET:-dev-only-insecure-secret-change-me}
+  BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@pravaha.local}
+  BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin12345}
   AI_PROVIDER_ORDER: ${AI_PROVIDER_ORDER:-mock}
   AI_OPENAI_API_KEY: ${AI_OPENAI_API_KEY:-}
   AI_GROQ_API_KEY: ${AI_GROQ_API_KEY:-}
@@ -35,7 +37,7 @@ services:
     environment:
       POSTGRES_DB: pravaha
       POSTGRES_USER: pravaha
-      POSTGRES_PASSWORD: pravaha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pravaha}
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:

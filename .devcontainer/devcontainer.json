@@ -1,0 +1,33 @@
+{
+  "name": "Pravaha (full stack)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true
+    },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+  "hostRequirements": { "cpus": 4, "memory": "8gb", "storage": "32gb" },
+  "onCreateCommand": "bash .devcontainer/post-create.sh",
+  "postAttachCommand": {
+    "hint": "echo 'Run:  docker compose up -d --build && docker compose run --rm migrate   then open the forwarded port 3000'"
+  },
+  "forwardPorts": [3000, 8000],
+  "portsAttributes": {
+    "3000": { "label": "Pravaha dashboard", "onAutoForward": "openPreview" },
+    "8000": { "label": "Pravaha API", "onAutoForward": "notify" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "ms-azuretools.vscode-docker",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}

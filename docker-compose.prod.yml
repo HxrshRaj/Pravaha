@@ -1,0 +1,77 @@
+# Production overlay. Use ON TOP of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# vs the base stack it:
+#   * pulls prebuilt images from GHCR instead of building (IMAGE_REPO / IMAGE_TAG)
+#   * adds a Caddy edge proxy with automatic HTTPS; only 80/443 are public
+#   * drops the host port mappings for postgres / redis / kafka / api / web
+#   * sets modest mem_limits so it fits a small always-free VM
+#   * reads real secrets from `.env` (never commit it) -- see deploy/.env.prod.example
+#
+# Required in .env:  PRAVAHA_DOMAIN PRAVAHA_ACME_EMAIL API_JWT_SECRET
+#                    POSTGRES_PASSWORD BOOTSTRAP_ADMIN_PASSWORD
+# (base compose already reads those via ${VAR:-default}.)
+
+x-prod-image: &prod-image
+  image: ${IMAGE_REPO:-ghcr.io/hxrshraj/pravaha}-app:${IMAGE_TAG:-latest}
+  build: !reset null
+  pull_policy: always
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./infrastructure/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      PRAVAHA_DOMAIN: ${PRAVAHA_DOMAIN:?set PRAVAHA_DOMAIN in .env}
+      PRAVAHA_ACME_EMAIL: ${PRAVAHA_ACME_EMAIL:-admin@example.com}
+    depends_on:
+      api: {condition: service_healthy}
+    mem_limit: 128m
+
+  postgres: { ports: !reset [], mem_limit: 1g }
+  redis:    { ports: !reset [], mem_limit: 256m }
+
+  kafka:
+    ports: !reset []
+    mem_limit: 1500m
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx1g"
+
+  api:
+    <<: *prod-image
+    ports: !reset []
+    environment:
+      API_CORS_ORIGINS: https://${PRAVAHA_DOMAIN}
+    mem_limit: 512m
+
+  migrate:      { <<: *prod-image }
+  kafka-init:   { <<: *prod-image }
+
+  analytics:     { <<: *prod-image, mem_limit: 384m }
+  persistence:   { <<: *prod-image, mem_limit: 384m }
+  dataquality:   { <<: *prod-image, mem_limit: 320m }
+  anomaly:       { <<: *prod-image, mem_limit: 384m }
+  ai-worker:     { <<: *prod-image, mem_limit: 384m }
+  audit:         { <<: *prod-image, mem_limit: 256m }
+  lag-monitor:   { <<: *prod-image, mem_limit: 256m }
+  replay-runner: { <<: *prod-image, mem_limit: 320m }
+  retention:     { <<: *prod-image, mem_limit: 256m }
+
+  web:
+    image: ${IMAGE_REPO:-ghcr.io/hxrshraj/pravaha}-web:${IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always
+    ports: !reset []
+    environment:
+      PRAVAHA_API_INTERNAL_URL: http://api:8000
+    mem_limit: 256m
+
+volumes:
+  caddy_data:
+  caddy_config:
