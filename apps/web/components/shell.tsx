@@ -5,6 +5,7 @@ import { clsx } from "@/lib/format";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Boxes,
   Database,
   FileWarning,
@@ -34,6 +35,7 @@ const NAV: { href: string; label: string; icon: any }[] = [
   { href: "/schemas", label: "Schemas", icon: Layers },
   { href: "/producers", label: "Producers", icon: Users },
   { href: "/analytics", label: "Analytics", icon: Activity },
+  { href: "/batch", label: "Batch Analytics", icon: BarChart3 },
   { href: "/anomalies", label: "Anomalies", icon: AlertTriangle },
   { href: "/alerts", label: "Alerts", icon: GaugeCircle },
   { href: "/consumers", label: "Consumer Groups", icon: Boxes },
