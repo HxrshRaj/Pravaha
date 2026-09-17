@@ -19,8 +19,8 @@ import org.apache.spark.sql.{SaveMode, SparkSession}
   * engine is safe to rerun.
   *
   * Usage (from spark/):
-  *   sbt "run --hours 24"
-  *   sbt "run --from 2026-09-17T00:00:00Z --to 2026-09-17T06:00:00Z"
+  *   sbt "runMain pravaha.batch.EventRollupJob --hours 24"
+  *   sbt "runMain pravaha.batch.EventRollupJob --from 2026-09-17T00:00:00Z --to 2026-09-17T06:00:00Z"
   */
 object EventRollupJob {
 

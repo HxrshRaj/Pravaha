@@ -381,6 +381,57 @@ comments at the fix sites):
    that config was set explicitly. Fixed by setting it (and `-Duser.timezone=UTC` on the
    forked JVM) in `EventRollupJob`.
 
+### 24.1 Second batch job: cross-event-type correlation summary
+
+`EventCorrelationJob` (`spark/src/main/scala/pravaha/batch/EventCorrelationJob.scala`) is a
+second, deliberately *different* aggregation over the same real `events` table, not another
+re-slice of event counts. For every unordered pair of event types it computes the **Pearson
+correlation coefficient and sample covariance** of their per-minute (configurable via
+`--bucket-minutes`) event counts across the whole requested window — e.g. does
+`payment.failed` volume move with `order.cancelled` volume; does `product.viewed` move with
+`product.purchased`. Results go to `batch_event_correlations` (`BatchEventCorrelation`
+model + its own Alembic migration).
+
+**Why this is a real batch-only capability, not busywork:** the real-time speed layer
+(`pravaha.analytics.processor`) maintains one bounded 1-minute tumbling window per metric
+and discards it once flushed — it can tell you this minute's count, but computing "how
+strongly do these two event types correlate across every minute we've ever recorded" needs
+random access to the entire history at once, which a stateful streaming operator
+structurally can't hold and a single batch pass over the durable table can do trivially.
+
+Run it (same connection env vars, same `sbt` prerequisite as the rollup job):
+```bash
+cd spark
+sbt "runMain pravaha.batch.EventCorrelationJob"                 # all history, 1-minute buckets
+sbt "runMain pravaha.batch.EventCorrelationJob --bucket-minutes 5"
+```
+
+**Verified against the same real data** (49,203 events currently in `events` — the table's
+row count has since dropped from the 59,203 cited above as `pravaha.retention` aged out
+older rows, which is itself the retention worker doing its real job, not a discrepancy):
+16 distinct event types → 120 pairs computed over 25 real 1-minute buckets. Three pairs
+were independently recomputed with pandas/numpy directly against the raw `events` table and
+matched Spark's output to 14+ significant figures — `order.created`↔`payment.initiated`
+r≈0.999 (they fire together almost every transaction), `inventory.released`↔`payment.failed`
+r≈0.995 (inventory is released exactly when a payment fails), `order.cancelled`↔`payment.failed`
+r≈0.953 (weaker — cancellations also happen for unrelated reasons), matching the domain
+logic those event types actually have in the generator. A rerun was confirmed to replace,
+not duplicate, its 120 rows.
+
+Two more real bugs surfaced during that verification and are fixed in the job:
+3. Spark 4's default ANSI SQL mode makes `corr()`/`covar_samp()` **throw** on a zero-variance
+   input (e.g. an event type with the exact same count in every bucket) instead of returning
+   `NULL` — caught by the unit test, not assumed; fixed with
+   `spark.sql.ansi.enabled=false`, since "correlation is undefined" is a real, valid answer
+   here, not a job failure.
+4. Bucketing event timestamps via `floor(extract(epoch FROM event_time) / n)` uses
+   Postgres's `double precision` epoch value, which can't exactly represent every
+   microsecond-precision timestamp at 2026-scale magnitudes — a handful of events sitting
+   right on a bucket boundary could round into the wrong minute. Cross-checking this job's
+   output against an independent pandas recomputation caught a real, small (~0.004) drift in
+   one pair's correlation; fixed by bucketing with pure `bigint` integer division instead,
+   which cannot misround.
+
 ## Repository layout
 
 ```
@@ -407,9 +458,10 @@ and recommendations → replay job replayed 168/168 events → DLQ inspect/retry
 data-quality scoring, correlation chains and the dashboard all verified. 58
 unit/failure tests pass; frontend lint + typecheck + build pass. Measured load numbers and
 known limitations are in [`docs/operations/load-testing.md`](docs/operations/load-testing.md).
-The Scala/Spark batch layer (§24) has additionally been run against that same real
-59k-row event log, its output cross-checked by hand against the raw table, and its
-Scala unit tests pass — see §24 for the exact numbers and the two real bugs that
+The Scala/Spark batch layer (§24) — both the hourly rollup and the cross-event-type
+correlation job (§24.1) — has additionally been run against that same real event log, its
+output cross-checked by hand against the raw table for each job, and all 3 Scala unit
+tests pass — see §24/§24.1 for the exact numbers and the four real bugs that
 verification caught.
 
 ## Git / attribution
