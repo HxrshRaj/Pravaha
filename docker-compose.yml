@@ -38,7 +38,11 @@ services:
       POSTGRES_DB: pravaha
       POSTGRES_USER: pravaha
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pravaha}
-    ports: ["5432:5432"]
+    # Host-side port is overridable (${POSTGRES_HOST_PORT}) - some hosts already
+    # run a native Postgres on 5432 and the OS will happily route localhost
+    # traffic to *that* instead of this container. Containers always reach this
+    # one at postgres:5432 regardless of what the host side is mapped to.
+    ports: ["${POSTGRES_HOST_PORT:-5432}:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pravaha -d pravaha"]

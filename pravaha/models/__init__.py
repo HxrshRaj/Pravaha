@@ -13,6 +13,7 @@ from pravaha.models.ai import (
 )
 from pravaha.models.alerting import Alert, AlertRule
 from pravaha.models.audit import AuditLog
+from pravaha.models.batch import BatchEventRollup
 from pravaha.models.consumers import ConsumerGroup, ConsumerInstance, ConsumerLag
 from pravaha.models.dataquality import DataQualityRecord
 from pravaha.models.dlq import DeadLetterEvent
@@ -41,6 +42,7 @@ __all__ = [
     "AlertRule",
     "AnomalyRecord",
     "AuditLog",
+    "BatchEventRollup",
     "ConsumerGroup",
     "ConsumerInstance",
     "ConsumerLag",
